@@ -1,5 +1,4 @@
 use regex::Regex;
-use std::process;
 use git2::Repository;
 use thiserror::Error;
 
@@ -18,11 +17,20 @@ impl CodeRepository{
         Ok(CodeRepository{repo: Repository::open(path)?})
     }
 
+    pub fn contains_pattern(&self, oid: git2::Oid, patterns: &[Regex]) -> bool {
+        let commit = self.repo.find_commit(oid).unwrap();
+        let commit_message = commit.message().unwrap();
+        patterns.iter().find(|p| p.find(&commit_message).is_some()).is_some()
+    }
+
     pub fn commits_matching(&self, patterns: &[Regex]) -> Result<Vec<git2::Oid>,CodeRepositoryError> {
         let mut walk = self.repo.revwalk()?;
         match walk.push_head() {
             Ok(_) => {
-                Ok(walk.filter(|or| or.is_ok()).map(|or| or.unwrap()).collect())
+                Ok(walk
+                    .filter(|or| or.is_ok()).map(|or| or.unwrap())
+                    .filter(|oid| self.contains_pattern(*oid, patterns))
+                    .collect())
             },
             Err(_) => {
                 Ok(vec![])
@@ -34,6 +42,8 @@ impl CodeRepository{
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process;
+
     #[test]
     fn open_repository() {
         let repository = CodeRepository::new("../shitty_project");
@@ -60,5 +70,12 @@ mod tests {
         let some_repo = CodeRepository::new(".").unwrap();
         let patterns = vec![Regex::new(".*").unwrap()];
         assert_eq!(some_repo.commits_matching(&patterns).unwrap().len(), number_of_commits_in_this_repo());
+    }
+
+    #[test]
+    fn commits_are_filtered_with_patterns() {
+        let some_repo = CodeRepository::new(".").unwrap();
+        let patterns = vec![Regex::new("Initial").unwrap()];
+        assert!(some_repo.commits_matching(&patterns).unwrap().len() < number_of_commits_in_this_repo());
     }
 }
