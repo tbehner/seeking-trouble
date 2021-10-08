@@ -1,14 +1,33 @@
 use regex::Regex;
 use std::process;
-pub struct CodeRepository {}
+use git2::Repository;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum CodeRepositoryError {
+    #[error("data store disconnected")]
+    Open(#[from] git2::Error),
+}
+
+pub struct CodeRepository {
+    repo: Repository,
+}
 
 impl CodeRepository{
-    pub fn new(path: &str) -> Result<CodeRepository,()> {
-        Ok(CodeRepository{})
+    pub fn new(path: &str) -> Result<CodeRepository,CodeRepositoryError> {
+        Ok(CodeRepository{repo: Repository::open(path)?})
     }
 
-    pub fn commits_matching(&self, patterns: &[Regex]) -> Vec<()> {
-        vec![]
+    pub fn commits_matching(&self, patterns: &[Regex]) -> Result<Vec<git2::Oid>,CodeRepositoryError> {
+        let mut walk = self.repo.revwalk()?;
+        match walk.push_head() {
+            Ok(_) => {
+                Ok(walk.filter(|or| or.is_ok()).map(|or| or.unwrap()).collect())
+            },
+            Err(_) => {
+                Ok(vec![])
+            }
+        }
     }
 }
 
@@ -23,9 +42,9 @@ mod tests {
 
     #[test]
     fn find_no_commits_on_empty_repository() {
-        let empty_repo = CodeRepository::new("../empty_repo");
+        let empty_repo = CodeRepository::new("../shitty_empty_project");
         let patterns: Vec<Regex> = vec![];
-        assert_eq!(empty_repo.unwrap().commits_matching(&patterns).len(), 0);
+        assert_eq!(empty_repo.unwrap().commits_matching(&patterns).unwrap().len(), 0);
     }
 
     fn number_of_commits_in_this_repo() -> usize {
@@ -40,7 +59,6 @@ mod tests {
     fn find_all_commits_on_this_repo_with_matchall_pattern() {
         let some_repo = CodeRepository::new(".").unwrap();
         let patterns = vec![Regex::new(".*").unwrap()];
-        assert_eq!(some_repo.commits_matching(&patterns).len(), number_of_commits_in_this_repo());
+        assert_eq!(some_repo.commits_matching(&patterns).unwrap().len(), number_of_commits_in_this_repo());
     }
-
 }
