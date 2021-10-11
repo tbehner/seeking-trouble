@@ -22,7 +22,7 @@ impl CodeRegion{
 
         CodeRegion{
             code: code.into(),
-            tree: tree,
+            tree,
         }
     }
 
@@ -31,12 +31,9 @@ impl CodeRegion{
         cursor.goto_first_child_for_point(Point::new(range.start, 0));
 
         let current_node = cursor.node();
-        dbg!(&range);
-        dbg!(current_node);
-        let start_line = current_node.start_position().row;
-        let end_line = current_node.end_position().row;
+        let line_range = current_node.start_position().row..current_node.end_position().row;
 
-        if has_intersection(range.clone(), start_line..end_line) {
+        if has_intersection(range.clone(), line_range) {
             Some(current_node.clone())
         } else {
             None
@@ -52,7 +49,6 @@ impl CodeRegion{
     pub fn extract_functions(&self, range: Range<usize>) -> Vec<String> {
 
         let mut functions = vec![];
-
         let mut next_range = range.clone();
         while !self.code.is_empty() && !next_range.is_empty() {
             match self.extract_function_next_from_range(next_range.clone()) {
