@@ -1,5 +1,5 @@
 use regex::Regex;
-use git2::{Repository,Oid, DiffDelta, DiffHunk};
+use git2::{Repository,Oid, DiffDelta, DiffHunk, DiffLine};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -41,25 +41,44 @@ impl CodeRepository{
     pub fn get_changes(&self, commit_id: Oid) -> String {
         let commit = self.repo.find_commit(commit_id).unwrap();
         let commit_tree = commit.tree().unwrap();
-
-        let diff = self.repo.diff_tree_to_tree(None, Some(&commit_tree), None).unwrap();
+        let mut parents = commit.parents();
+        let diff = if parents.len() == 0 {
+            self.repo.diff_tree_to_tree(None, Some(&commit_tree), None).unwrap()
+        } else {
+            let parent = parents.next().unwrap();
+            let parent_tree = parent.tree().unwrap();
+            self.repo.diff_tree_to_tree(Some(&parent_tree), Some(&commit_tree), None).unwrap()
+        };
         let mut sum: Vec<String> = vec![];
 
-        let mut concat_hunks = |delta: DiffDelta, _hunk: DiffHunk| -> bool {
-            let old_file_id = delta.old_file().id();
-            if  old_file_id.is_zero() {
-                sum.push("".into())
-            } else {
-                let old_file =  self.repo.find_blob(old_file_id).unwrap();
-                let file_content = old_file.content();
-                sum.push(String::from_utf8_lossy(&file_content).to_string());
+        // let mut concat_hunks = |delta: DiffDelta, hunk: DiffHunk| -> bool {
+        //     let old_file_id = delta.old_file().id();
+        //     if  old_file_id.is_zero() {
+        //         sum.push("".into())
+        //     } else {
+        //         let old_file = self.repo.find_blob(old_file_id).unwrap();
+        //         let old_file_content =  String::from_utf8_lossy(old_file.content());
+        //         let file_content: Vec<&str> = old_file_content.lines().collect();
+        //         let start: usize = hunk.old_start() as usize;
+        //         let end: usize = start + (hunk.old_lines() as usize);
+        //         let changes = &file_content[start..end];
+        //         sum.push(changes.join("\n"));
+        //     }
+
+        //     true
+        // };
+
+        let mut concat_lines = |_delta: DiffDelta, _maybe_hunk: Option<DiffHunk>, line: DiffLine| -> bool {
+
+            if line.origin_value() == git2::DiffLineType::Deletion {
+                sum.push(String::from_utf8_lossy(line.content()).to_string());
             }
 
             true
         };
 
 
-        diff.foreach(&mut |_,_| {true}, None, Some(&mut concat_hunks), None).unwrap();
+        diff.foreach(&mut |_,_| {true}, None, None, Some(&mut concat_lines)).unwrap();
         sum.join("")
     }
 }
@@ -112,7 +131,6 @@ mod tests {
         assert!(changes.is_empty());
     }
     
-
     #[test]
     fn extract_empty_string_from_initial_commit_adding_nonempty_file() {
         let some_repo = CodeRepository::new(".").unwrap();
@@ -121,4 +139,25 @@ mod tests {
         dbg!(&changes);
         assert!(changes.is_empty());
     }
+
+    #[test]
+    fn extract_string_from_commit() {
+        let some_repo = CodeRepository::new("../shitty_project").unwrap();
+        let commit = git2::Oid::from_str("1a038d4ee7a19fe0eb5a83a5cf3c14109d3669bb").unwrap();
+        let changes: String = some_repo.get_changes(commit);
+        dbg!(&changes);
+        assert!(changes.contains("typedef"));
+        assert!(!changes.contains("fp(20)"));
+    }
+
+    #[test]
+    fn extract_line_from_commit() {
+        let some_repo = CodeRepository::new("../shitty_project").unwrap();
+        let commit = git2::Oid::from_str("1a038d4ee7a19fe0eb5a83a5cf3c14109d3669bb").unwrap();
+        let changes: String = some_repo.get_changes(commit);
+        dbg!(&changes);
+        assert!(changes.contains("typedef"));
+        assert!(!changes.contains("main"));
+    }
+
 }

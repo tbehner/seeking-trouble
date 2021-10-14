@@ -26,7 +26,7 @@ impl CodeRegion{
         }
     }
 
-    fn extract_function_next_from_range(&self, range: Range<usize>) -> Option<Node>{
+    fn extract_next_from_range(&self, range: Range<usize>) -> Option<Node>{
         let mut cursor = self.tree.walk();
         cursor.goto_first_child_for_point(Point::new(range.start, 0));
 
@@ -40,7 +40,7 @@ impl CodeRegion{
         }
     }
 
-    fn extract_function_from_node(&self, function_node: Node) -> String {
+    fn extract_code_from_node(&self, function_node: Node) -> String {
         let start = function_node.start_byte();
         let end = function_node.end_byte();
         String::from_utf8_lossy(&self.code.as_bytes()[start..end]).to_string()
@@ -51,9 +51,9 @@ impl CodeRegion{
         let mut functions = vec![];
         let mut next_range = range.clone();
         while !self.code.is_empty() && !next_range.is_empty() {
-            match self.extract_function_next_from_range(next_range.clone()) {
+            match self.extract_next_from_range(next_range.clone()) {
                 Some(function) => {
-                    functions.push(self.extract_function_from_node(function));
+                    functions.push(self.extract_code_from_node(function));
                     next_range = (function.range().end_point.row+1)..next_range.end;
                 },
                 None => break
