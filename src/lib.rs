@@ -47,7 +47,6 @@ impl CodeRegion{
     }
 
     pub fn extract_functions(&self, range: Range<usize>) -> Vec<String> {
-
         let mut functions = vec![];
         let mut next_range = range.clone();
         while !self.code.is_empty() && !next_range.is_empty() {

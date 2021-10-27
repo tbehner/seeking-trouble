@@ -51,23 +51,6 @@ impl CodeRepository{
         };
         let mut sum: Vec<String> = vec![];
 
-        // let mut concat_hunks = |delta: DiffDelta, hunk: DiffHunk| -> bool {
-        //     let old_file_id = delta.old_file().id();
-        //     if  old_file_id.is_zero() {
-        //         sum.push("".into())
-        //     } else {
-        //         let old_file = self.repo.find_blob(old_file_id).unwrap();
-        //         let old_file_content =  String::from_utf8_lossy(old_file.content());
-        //         let file_content: Vec<&str> = old_file_content.lines().collect();
-        //         let start: usize = hunk.old_start() as usize;
-        //         let end: usize = start + (hunk.old_lines() as usize);
-        //         let changes = &file_content[start..end];
-        //         sum.push(changes.join("\n"));
-        //     }
-
-        //     true
-        // };
-
         let mut concat_lines = |_delta: DiffDelta, _maybe_hunk: Option<DiffHunk>, line: DiffLine| -> bool {
 
             if line.origin_value() == git2::DiffLineType::Deletion {
@@ -87,18 +70,117 @@ impl CodeRepository{
 mod tests {
     use super::*;
     use std::process;
+    use tempdir::TempDir;
+    use anyhow::Result;
+    use std::path::Path;
+    use git2::Repository;
+    use std::fs::File;
+    use std::io::prelude::*;
+    use indoc::indoc;
 
-    #[test]
-    fn open_repository() {
-        let repository = CodeRepository::new("../shitty_project");
-        assert!(repository.is_ok());
+    fn with_empty_repo(test: fn(&Path) -> ()) -> Result<()>{
+        let repo_dir = TempDir::new("empty_repository")?;
+        let _repo = Repository::init(repo_dir.path())?;
+
+        test(repo_dir.path());
+
+        Ok(())
+    }
+
+    fn commit_file(repo_dir: &Path, filename: &str, content: &str, msg: &str) -> Result<()>{
+        let mut new_file = File::create(repo_dir.join(filename))?;
+        new_file.write(content.as_bytes())?;
+
+        process::Command::new("git")  
+            .args(&["add", filename])
+            .current_dir(repo_dir)
+            .status()?;
+        process::Command::new("git")  
+            .args(&["commit", "-a", "-m", msg])
+            .current_dir(repo_dir)
+            .status()?;
+        Ok(())
+    }
+
+    fn create_temporary_repository() -> Result<TempDir> {
+        let repo_dir = TempDir::new("buggy_repository")?;
+        Repository::init(repo_dir.path())?;
+        Ok(repo_dir)
+    }
+
+    fn with_repo_containing_bugs(test: fn(&Path) -> ()) -> Result<()> {
+        let repo_dir = create_temporary_repository()?;
+        commit_file(repo_dir.path(), "foo", "", "Create foo")?;
+
+        test(repo_dir.path());
+
+        Ok(())
+    }
+
+    fn with_repo_containing_function_pointer_bug(test: fn(&Path) -> ()) -> Result<()> {
+        let repo_dir = create_temporary_repository()?;
+        let buggy_code = indoc! {r#"
+            #include <stdio.h>
+
+            void foo(int i) {
+              printf("%i\n", i);
+            }
+
+            typedef void (*fpt)(unsigned int i);
+
+            int main() {
+              fpt fp;
+
+              fp = foo;
+
+              foo(10);
+              fp(20);
+            }
+        "#};
+
+        let fixed_bug = indoc!{r#"
+            #include <stdio.h>
+
+            void foo(int i) {
+              printf("%i\n", i);
+            }
+
+            typedef void (*fpt)(int i);
+
+            int main() {
+              fpt fp;
+
+              fp = foo;
+
+              foo(10);
+              fp(20);
+            }
+        "#};
+
+        commit_file(repo_dir.path(), "main.c", buggy_code, "this should work!")?;
+        commit_file(repo_dir.path(), "main.c", fixed_bug, "fixed bug")?;
+
+        test(repo_dir.path());
+
+        Ok(())
+
     }
 
     #[test]
-    fn find_no_commits_on_empty_repository() {
-        let empty_repo = CodeRepository::new("../shitty_empty_project");
-        let patterns: Vec<Regex> = vec![];
-        assert_eq!(empty_repo.unwrap().commits_matching(&patterns).unwrap().len(), 0);
+    fn open_repository() -> Result<()> {
+        with_empty_repo(|repo_path: &Path| {
+            let repository = CodeRepository::new(repo_path.to_str().unwrap());
+            assert!(repository.is_ok());
+        })
+    }
+
+    #[test]
+    fn find_no_commits_on_empty_repository() -> Result<()> {
+        with_empty_repo(|repo_path: &Path| {
+            let empty_repo = CodeRepository::new(repo_path.to_str().unwrap());
+            let patterns: Vec<Regex> = vec![];
+            assert_eq!(empty_repo.unwrap().commits_matching(&patterns).unwrap().len(), 0);
+        })
     }
 
     fn number_of_commits_in_this_repo() -> usize {
@@ -123,12 +205,26 @@ mod tests {
         assert!(some_repo.commits_matching(&patterns).unwrap().len() < number_of_commits_in_this_repo());
     }
 
+    fn initial_commit(repo_path: &Path) -> String {
+        let stdout = process::Command::new("git")
+            .args(&["rev-list", "--max-parents=0", "HEAD"])
+            .current_dir(repo_path)
+            .output()
+            .expect("querying first commit id")
+            .stdout;
+        String::from_utf8_lossy(&stdout).trim().to_string()
+    }
+
     #[test]
-    fn extract_empty_string_from_initial_commit_adding_empty_file() {
-        let some_repo = CodeRepository::new("../shitty_test_project").unwrap();
-        let commit = git2::Oid::from_str("b2d9ff0faf5d9f201849485f96962e9facaa1428").unwrap();
-        let changes: String = some_repo.get_changes(commit);
-        assert!(changes.is_empty());
+    fn extract_empty_string_from_initial_commit_adding_empty_file() -> Result<()> {
+        with_repo_containing_bugs(|path: &Path| {
+            let some_repo = CodeRepository::new(path.to_str().unwrap()).unwrap();
+            let commit_id = initial_commit(path);
+            dbg!(&commit_id);
+            let commit = git2::Oid::from_str(&commit_id).unwrap();
+            let changes: String = some_repo.get_changes(commit);
+            assert!(changes.is_empty());
+        })
     }
     
     #[test]
@@ -140,24 +236,42 @@ mod tests {
         assert!(changes.is_empty());
     }
 
-    #[test]
-    fn extract_string_from_commit() {
-        let some_repo = CodeRepository::new("../shitty_project").unwrap();
-        let commit = git2::Oid::from_str("1a038d4ee7a19fe0eb5a83a5cf3c14109d3669bb").unwrap();
-        let changes: String = some_repo.get_changes(commit);
-        dbg!(&changes);
-        assert!(changes.contains("typedef"));
-        assert!(!changes.contains("fp(20)"));
+    fn get_last_commit(repo_path: &str) -> String {
+        let stdout = process::Command::new("git")
+            .args(&["rev-list", "--max-count=1", "master"])
+            .current_dir(repo_path)
+            .output()
+            .expect("querying the last commit on master")
+            .stdout;
+        String::from_utf8_lossy(&stdout).trim().to_string()
     }
 
     #[test]
-    fn extract_line_from_commit() {
-        let some_repo = CodeRepository::new("../shitty_project").unwrap();
-        let commit = git2::Oid::from_str("1a038d4ee7a19fe0eb5a83a5cf3c14109d3669bb").unwrap();
-        let changes: String = some_repo.get_changes(commit);
-        dbg!(&changes);
-        assert!(changes.contains("typedef"));
-        assert!(!changes.contains("main"));
+    fn extract_string_from_commit() -> Result<()>{
+        with_repo_containing_function_pointer_bug(|project_path| {
+            let project_path_str = project_path.to_str().unwrap();
+            let some_repo = CodeRepository::new(project_path_str).unwrap();
+            let commit = git2::Oid::from_str(&get_last_commit(project_path_str)).unwrap();
+            let changes: String = some_repo.get_changes(commit);
+            dbg!(&changes);
+            assert!(changes.contains("typedef"));
+            assert!(!changes.contains("fp(20)"));
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn extract_line_from_commit() -> Result<()> {
+        with_repo_containing_function_pointer_bug(|project_path| {
+            let prj_str = project_path.to_str().unwrap();
+            let some_repo = CodeRepository::new(prj_str).unwrap();
+            let commit = git2::Oid::from_str(&get_last_commit(prj_str)).unwrap();
+            let changes: String = some_repo.get_changes(commit);
+            dbg!(&changes);
+            assert!(changes.contains("typedef"));
+            assert!(!changes.contains("main"));
+        })?;
+        Ok(())
     }
 
 }
