@@ -44,19 +44,30 @@ impl CodeRegion{
         String::from_utf8_lossy(&self.code.as_bytes()[start..end]).to_string()
     }
 
-    pub fn extract_functions(&self, range: Range<usize>) -> Vec<String> {
-        let mut functions = vec![];
+    pub fn extract_compounds_by(&self, range: Range<usize>, filter: fn(node: &Node) -> bool) -> Vec<String> {
+        let mut compounds = vec![];
         let mut next_range = range.clone();
         while !self.code.is_empty() && !next_range.is_empty() {
             match self.extract_next_from_range(next_range.clone()) {
-                Some(function) => {
-                    functions.push(self.extract_code_from_node(function));
-                    next_range = (function.range().end_point.row+1)..next_range.end;
+                Some(entity) if filter(&entity) => {
+                    compounds.push(self.extract_code_from_node(entity));
+                    next_range = (entity.range().end_point.row+1)..next_range.end;
+                },
+                Some(entity) => {
+                    next_range = (entity.range().end_point.row+1)..next_range.end;
                 },
                 None => break
             }
         }
-        functions
+        compounds
+    }
+
+    pub fn extract_compound(&self, range: Range<usize>) -> Vec<String> {
+        self.extract_compounds_by(range, |_| true)
+    }
+
+    pub fn extract_functions(&self, range: Range<usize>) -> Vec<String> {
+        self.extract_compounds_by(range, |n| n.kind() == "function_definition")
     }
 }
 
@@ -68,21 +79,21 @@ mod tests {
     #[test]
     fn get_empty_vec_from_empty_content_test() {
         let code = CodeRegion::new("");
-        assert!(code.extract_functions(0..1).is_empty());
+        assert!(code.extract_compound(0..1).is_empty());
     }
 
     #[test]
     fn get_function_if_content_contains_single_function_test() {
         let content = "int main(int argc, char** argv) {return 0;}";
         let code = CodeRegion::new(&content);
-        assert!(!code.extract_functions(0..1).is_empty())
+        assert!(!code.extract_compound(0..1).is_empty())
     }
 
     #[test]
     fn get_function_if_content_contains_single_function_and_region_is_empty_test() {
         let content = "int main(int argc, char** argv) {return 0;}";
         let code = CodeRegion::new(&content);
-        assert!(code.extract_functions(1..1).is_empty())
+        assert!(code.extract_compound(1..1).is_empty())
     }
 
     #[test]
@@ -91,7 +102,7 @@ mod tests {
         void foo() {}
         int main() {foo()};
         "};
-        let all_functions = CodeRegion::new(&content).extract_functions(0..1);
+        let all_functions = CodeRegion::new(&content).extract_compound(0..1);
         let functions_containing_main = all_functions.iter().find(|c| c.contains("main"));
         assert!(functions_containing_main.is_none());
     }
@@ -105,7 +116,7 @@ mod tests {
         }
         int main() {foo()};
         "#};
-        let all_functions = CodeRegion::new(&content).extract_functions(2..4);
+        let all_functions = CodeRegion::new(&content).extract_compound(2..4);
         let functions_containing_main = all_functions.iter().find(|c| c.contains("main"));
         assert!(functions_containing_main.is_none());
     }
@@ -119,7 +130,7 @@ mod tests {
         }
         int main() {foo()};
         "#};
-        let all_functions = CodeRegion::new(&content).extract_functions(2..3);
+        let all_functions = CodeRegion::new(&content).extract_compound(2..3);
         let functions_containing_main = all_functions.iter().find(|c| c.contains("void foo()"));
         assert!(functions_containing_main.is_some());
     }
@@ -133,9 +144,40 @@ mod tests {
         }
         int main() {foo()};
         "#};
-        let all_functions = CodeRegion::new(&content).extract_functions(2..5);
+        let all_functions = CodeRegion::new(&content).extract_compound(2..5);
         assert!(all_functions.len() == 2);
     }
+
+    #[test]
+    fn extract_struct_from_range() {
+        let content = indoc!{r#"
+        #include <stdio.h>
+        typedef struct { } foo;
+
+        void main() {
+            foo a;
+        }
+        "#};
+        let all_regions = CodeRegion::new(&content).extract_compound(1..4);
+        dbg!(&all_regions);
+        assert!(all_regions.len() == 2);
+    }
+
+    #[test]
+    fn extract_only_functions_from_range() {
+        let content = indoc!{r#"
+        #include <stdio.h>
+        typedef struct { } foo;
+
+        void main() {
+            foo a;
+        }
+        "#};
+        let all_regions = CodeRegion::new(&content).extract_functions(1..5);
+        dbg!(&all_regions);
+        assert!(all_regions.len() == 1);
+    }
+
 
     #[test]
     fn empty_empty_has_no_intersection_test() {
