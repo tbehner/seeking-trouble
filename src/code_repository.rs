@@ -1,6 +1,10 @@
 use regex::Regex;
 use git2::{Repository,Oid, DiffDelta, DiffHunk, DiffLine};
 use thiserror::Error;
+use std::ops::Range;
+use std::collections::HashMap;
+use crate::change_set::ChangeSet;
+
 
 #[derive(Error, Debug)]
 pub enum CodeRepositoryError {
@@ -63,6 +67,38 @@ impl CodeRepository{
 
         diff.foreach(&mut |_,_| {true}, None, None, Some(&mut concat_lines)).unwrap();
         sum.join("")
+    }
+
+    pub fn get_change_sets(&self, commit_id: Oid) -> Vec<ChangeSet> {
+        let commit = self.repo.find_commit(commit_id).unwrap();
+        let commit_tree = commit.tree().unwrap();
+        let mut parents = commit.parents();
+        let diff = if parents.len() == 0 {
+            self.repo.diff_tree_to_tree(None, Some(&commit_tree), None).unwrap()
+        } else {
+            let parent = parents.next().unwrap();
+            let parent_tree = parent.tree().unwrap();
+            self.repo.diff_tree_to_tree(Some(&parent_tree), Some(&commit_tree), None).unwrap()
+        };
+
+        let mut sum: HashMap<String, ChangeSet> = HashMap::new();
+
+        let mut concat_lines = |_delta: DiffDelta, _maybe_hunk: Option<DiffHunk>, line: DiffLine| -> bool {
+
+            if line.origin_value() == git2::DiffLineType::Deletion {
+
+                //sum.push(String::from_utf8_lossy(line.content()).to_string());
+                // check if the filename has a ChangeSet
+                //      if not create one, with the respective content
+                // add the linenumber to the ChangeSet
+            }
+
+            true
+        };
+
+
+        diff.foreach(&mut |_,_| {true}, None, None, Some(&mut concat_lines)).unwrap();
+        vec![]
     }
 }
 
@@ -273,5 +309,20 @@ mod tests {
         })?;
         Ok(())
     }
+
+    #[test]
+    #[ignore]
+    fn extract_line_from_commit_to_changeset() -> Result<()> {
+        with_repo_containing_function_pointer_bug(|project_path| {
+            let prj_str = project_path.to_str().unwrap();
+            let some_repo = CodeRepository::new(prj_str).unwrap();
+            let commit = git2::Oid::from_str(&get_last_commit(prj_str)).unwrap();
+            let changes: Vec<ChangeSet> = some_repo.get_change_sets(commit);
+            let expected_line: usize = 6;
+            assert!(changes.iter().find(|cs| cs.code.contains("typedef") && cs.ranges().iter().find(|r| r.contains(&expected_line)).is_some()).is_some())
+        })?;
+        Ok(())
+    }
+
 
 }
