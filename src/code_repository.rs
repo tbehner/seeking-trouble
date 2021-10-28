@@ -94,11 +94,11 @@ mod tests {
         process::Command::new("git")  
             .args(&["add", filename])
             .current_dir(repo_dir)
-            .status()?;
+            .output()?;
         process::Command::new("git")  
             .args(&["commit", "-a", "-m", msg])
             .current_dir(repo_dir)
-            .status()?;
+            .output()?;
         Ok(())
     }
 
