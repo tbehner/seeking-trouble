@@ -6,7 +6,7 @@
 //! let repository = CodeRepository::new(".").unwrap();
 //! let patterns = vec![Regex::new("bug").unwrap()];
 //! for oid in repository.commits_matching(&patterns).unwrap() {
-//!     repository.get_changes(oid);
+//!     repository.get_change_sets(oid);
 //! }
 //! ```
 

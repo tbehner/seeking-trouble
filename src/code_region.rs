@@ -54,6 +54,7 @@ impl CodeRegion{
                     next_range = (entity.range().end_point.row+1)..next_range.end;
                 },
                 Some(entity) => {
+                    dbg!(entity.kind());
                     next_range = (entity.range().end_point.row+1)..next_range.end;
                 },
                 None => break

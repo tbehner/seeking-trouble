@@ -1,16 +1,17 @@
 use std::ops::Range;
+use std::path::{PathBuf, Path};
 
 pub struct ChangeSet {
-    pub filename: String,
-    pub code: String,
+    pub filename: PathBuf,
+    pub code: Vec<String>,
     pub lines: Vec<usize>
 }
 
 impl ChangeSet {
-    pub fn new(filename: &str, code: &str) -> ChangeSet {
+    pub fn new<P: AsRef<Path> + ?Sized>(filename: &P, code: &str) -> ChangeSet {
         ChangeSet{
-            filename: filename.into(), 
-            code: code.into(), 
+            filename: PathBuf::from(filename.as_ref()),
+            code: code.lines().map(|l| l.into()).collect(), 
             lines: vec![]
         }
     }
@@ -38,10 +39,16 @@ impl ChangeSet {
 
         ranges
     }
+
+    pub fn text_ranges(&self) -> Vec<String> {
+        self.ranges().iter().map(|r| self.code[r.clone()].join("") ).collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use indoc::indoc;
+
     use super::*;
 
     #[test]
@@ -114,6 +121,29 @@ mod tests {
         (1..4).for_each(|v| cs.add_line(v as usize) );
 
         assert_eq!(cs.ranges().len(), 1);
+    }
+
+    #[test]
+    fn contains_many_ranges_for_many_single_values() {
+        let mut cs = ChangeSet::new("", "");
+        let values: Vec<usize> = (1..100).filter(|i| i % 2 == 0).collect();
+        values.iter().for_each(|v| cs.add_line(*v));
+        assert_eq!(cs.ranges().len(), 49);
+    }
+
+    #[test]
+    fn retrieve_changes_code() {
+        let code = indoc! {r#"
+        #include <stdio.h>
+        int main() {
+            println("%s", "foo");
+        }
+        "#};
+        let mut cs = ChangeSet::new("main.c", &code);
+        cs.add_line(2);
+        let all_ranges = cs.text_ranges().join("\n");
+        dbg!(&all_ranges);
+        assert!(all_ranges.contains("println"));
     }
 
 }
